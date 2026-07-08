@@ -1,0 +1,372 @@
+//
+//  PushNotificationSupport.swift
+//
+
+import UIKit
+import UserNotifications
+import UniformTypeIdentifiers
+
+// MARK: - PushPayload
+
+/// 推送 Payload 解析模型。
+///
+/// 统一解析 pushId、deeplink、图片、视频、缩略图、deviceToken 等字段。
+/// 不要在 AppDelegate、NotificationServiceExtension、Router 里到处写 userInfo["xxx"]。
+struct PushPayload {
+
+    /// 原始 userInfo。
+    let rawUserInfo: [AnyHashable: Any]
+
+    /// 推送 ID，用于 pushservice 点击上报。
+    let pushId: String?
+
+    /// deeplink，用于点击通知后的页面跳转。
+    let deeplink: URL?
+
+    /// 图片地址，用于富媒体通知。
+    let imageURL: URL?
+
+    /// 视频地址，用于富媒体通知。
+    let videoURL: URL?
+
+    /// 视频封面地址。
+    ///
+    /// 推荐优先展示 thumbnail，而不是直接下载完整视频。
+    let thumbnailURL: URL?
+
+    /// payload 里的业务 deviceToken。
+    ///
+    /// 注意：这个不是 APNs URL path 里的 deviceToken。
+    /// 这里只是业务字段，如果 pushservice 不需要，可以不传。
+    let deviceToken: String?
+
+    init(userInfo: [AnyHashable: Any]) {
+        self.rawUserInfo = userInfo
+
+        self.pushId = userInfo.stringValue(
+            for: "pushId",
+            "push_id",
+            "messageId",
+            "msgId"
+        )
+
+        self.deviceToken = userInfo.stringValue(
+            for: "deviceToken",
+            "device_token"
+        )
+
+        self.deeplink = userInfo.urlValue(
+            for: "deeplink",
+            "deepLink",
+            "link",
+            "url"
+        )
+
+        self.imageURL = userInfo.urlValue(
+            for: "image",
+            "imageUrl",
+            "image_url",
+            "picUrl"
+        )
+
+        self.videoURL = userInfo.urlValue(
+            for: "video",
+            "videoUrl",
+            "video_url"
+        )
+
+        self.thumbnailURL = userInfo.urlValue(
+            for: "thumbnail",
+            "thumbnailUrl",
+            "thumbnail_url",
+            "coverUrl",
+            "cover"
+        )
+    }
+
+    /// Notification Service Extension 展示富媒体时优先使用的资源。
+    ///
+    /// 顺序：
+    /// 1. thumbnailURL：视频封面，最稳
+    /// 2. imageURL：图片
+    /// 3. videoURL：视频
+    var preferredAttachmentURL: URL? {
+        thumbnailURL ?? imageURL ?? videoURL
+    }
+}
+
+// MARK: - Dictionary Parse Helpers
+
+private extension Dictionary where Key == AnyHashable, Value == Any {
+
+    func stringValue(for keys: String...) -> String? {
+        for key in keys {
+            if let value = self[AnyHashable(key)] as? String,
+               !value.isEmpty {
+                return value
+            }
+
+            if let value = self[AnyHashable(key)] as? NSNumber {
+                return value.stringValue
+            }
+        }
+
+        return nil
+    }
+
+    func urlValue(for keys: String...) -> URL? {
+        for key in keys {
+            guard let string = self[AnyHashable(key)] as? String,
+                  !string.isEmpty,
+                  let url = URL(string: string) else {
+                continue
+            }
+
+            return url
+        }
+
+        return nil
+    }
+}
+
+// MARK: - AppDelegate Notification Click Handling
+
+extension AppDelegate: UNUserNotificationCenterDelegate {
+
+    /// 用户点击通知后触发。
+    ///
+    /// 注意：
+    /// 这个方法不是“收到推送”。
+    /// 它是用户点击通知横幅、通知中心通知、通知 action 后触发。
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
+        let payload = PushPayload(
+            userInfo: response.notification.request.content.userInfo
+        )
+
+        handleNotificationClick(
+            payload: payload,
+            completionHandler: completionHandler
+        )
+    }
+
+    /// App 前台收到通知时触发。
+    ///
+    /// 如果你项目里已经实现过这个方法，可以删掉这里，保留你自己的。
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        if #available(iOS 14.0, *) {
+            completionHandler([.banner, .list, .sound, .badge])
+        } else {
+            completionHandler([.alert, .sound, .badge])
+        }
+    }
+
+    /// 点击通知后的主流程：
+    ///
+    /// 1. 先开启后台任务
+    /// 2. 发送 pushservice 点击上报
+    /// 3. 立即执行 deeplink 跳转
+    /// 4. 调用系统 completionHandler
+    /// 5. pushservice complete 后结束后台任务
+    private func handleNotificationClick(
+        payload: PushPayload,
+        completionHandler: @escaping () -> Void
+    ) {
+        var bgTaskId: UIBackgroundTaskIdentifier = .invalid
+
+        /// 结束后台任务。
+        ///
+        /// 可以被多次调用。
+        /// guard 可以保证真正只 end 一次。
+        func endBackgroundTask() {
+            guard bgTaskId != .invalid else { return }
+
+            UIApplication.shared.endBackgroundTask(bgTaskId)
+            bgTaskId = .invalid
+        }
+
+        /// 1. 先开启后台任务。
+        ///
+        /// 这一步要放在 deeplink 前面。
+        /// 因为 deeplink 可能切页面、切 scene，甚至跳外部 App。
+        bgTaskId = UIApplication.shared.beginBackgroundTask(withName: "PushService.Send") {
+            endBackgroundTask()
+        }
+
+        /// 2. 发送 pushservice 点击上报。
+        ///
+        /// 你的 pushservice 已经有 completion，所以：
+        /// - 不需要 Task
+        /// - 不需要 DispatchQueue.global
+        /// - 不需要延迟 0.5 秒
+        ///
+        /// 这里假设你们的 PushService completion 是 Result<Void, Error>。
+        /// 如果你们是 Bool，看下面的替换写法。
+        PushService.shared.sendOpenEvent(
+            pushId: payload.pushId,
+            deeplink: payload.deeplink?.absoluteString,
+            deviceToken: payload.deviceToken
+        ) { result in
+            DispatchQueue.main.async {
+                switch result {
+                case .success:
+                    print("PushService send success. pushId:", payload.pushId ?? "nil")
+
+                case .failure(let error):
+                    print("PushService send failed:", error)
+                }
+
+                /// 请求完成后结束后台任务。
+                endBackgroundTask()
+            }
+        }
+
+        /// 3. 执行 deeplink 跳转。
+        ///
+        /// 这里不等 pushservice 完成，用户体验更快。
+        /// 因为上面已经 beginBackgroundTask，所以 pushservice 请求仍然有后台时间保护。
+        if let deeplink = payload.deeplink {
+            openDeeplink(deeplink)
+        }
+
+        /// 4. 通知系统：点击通知这件事已经处理完。
+        ///
+        /// 注意：
+        /// completionHandler() 先执行没有问题。
+        /// pushservice 请求由 background task 继续保护，完成后再 endBackgroundTask。
+        completionHandler()
+    }
+
+    private func openDeeplink(_ url: URL) {
+        /// 替换成你们自己的 deeplink 路由。
+        ///
+        /// 例如：
+        /// DeepLinkRouter.shared.open(url)
+        ///
+        /// 如果你这里已经有现成方法，直接调用你自己的。
+        DeepLinkRouter.shared.open(url)
+    }
+}
+
+// MARK: - Notification Service Extension Rich Media Handling
+
+/// 富媒体通知处理。
+///
+/// 这个类应该放在 Notification Service Extension Target 里。
+///
+/// 如果你真的只想维护一个文件：
+/// - 主 App Target 可以保留上面的 AppDelegate 扩展。
+/// - Notification Service Extension Target 可以复用 PushPayload 和下面这个 NotificationService。
+///
+/// 功能：
+/// 1. 解析 image / thumbnail / video
+/// 2. 下载远程资源
+/// 3. 生成 UNNotificationAttachment
+/// 4. 通知展示前把附件塞进去
+///
+/// 不负责：
+/// 1. 点击上报
+/// 2. deeplink 跳转
+/// 3. pushservice open event
+final class NotificationService: UNNotificationServiceExtension {
+
+    private var contentHandler: ((UNNotificationContent) -> Void)?
+    private var bestAttemptContent: UNMutableNotificationContent?
+
+    override func didReceive(
+        _ request: UNNotificationRequest,
+        withContentHandler contentHandler: @escaping (UNNotificationContent) -> Void
+    ) {
+        self.contentHandler = contentHandler
+
+        guard let content = request.content.mutableCopy() as? UNMutableNotificationContent else {
+            contentHandler(request.content)
+            return
+        }
+
+        self.bestAttemptContent = content
+
+        let payload = PushPayload(userInfo: request.content.userInfo)
+
+        guard let attachmentURL = payload.preferredAttachmentURL else {
+            contentHandler(content)
+            return
+        }
+
+        downloadAttachment(from: attachmentURL) { attachment in
+            if let attachment {
+                content.attachments = [attachment]
+            }
+
+            contentHandler(content)
+        }
+    }
+
+    override func serviceExtensionTimeWillExpire() {
+        /// 系统给 Notification Service Extension 的时间快到了。
+        /// 下载还没完成也要返回当前内容，不能一直等。
+        if let contentHandler,
+           let bestAttemptContent {
+            contentHandler(bestAttemptContent)
+        }
+    }
+
+    private func downloadAttachment(
+        from remoteURL: URL,
+        completion: @escaping (UNNotificationAttachment?) -> Void
+    ) {
+        URLSession.shared.downloadTask(with: remoteURL) { tempURL, response, error in
+            guard let tempURL, error == nil else {
+                completion(nil)
+                return
+            }
+
+            let fileExtension = Self.fileExtension(
+                remoteURL: remoteURL,
+                response: response
+            )
+
+            let localURL = URL(fileURLWithPath: NSTemporaryDirectory())
+                .appendingPathComponent(UUID().uuidString)
+                .appendingPathExtension(fileExtension)
+
+            do {
+                try FileManager.default.moveItem(at: tempURL, to: localURL)
+
+                let attachment = try UNNotificationAttachment(
+                    identifier: UUID().uuidString,
+                    url: localURL,
+                    options: nil
+                )
+
+                completion(attachment)
+            } catch {
+                print("Notification attachment error:", error)
+                completion(nil)
+            }
+        }.resume()
+    }
+
+    private static func fileExtension(
+        remoteURL: URL,
+        response: URLResponse?
+    ) -> String {
+        if !remoteURL.pathExtension.isEmpty {
+            return remoteURL.pathExtension
+        }
+
+        if let mimeType = response?.mimeType,
+           let fileExtension = UTType(mimeType: mimeType)?.preferredFilenameExtension {
+            return fileExtension
+        }
+
+        return "tmp"
+    }
+}
