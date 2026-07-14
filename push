@@ -5,7 +5,46 @@
 import UIKit
 import UserNotifications
 import UniformTypeIdentifiers
+private var pushTaskID: UIBackgroundTaskIdentifier = .invalid
 
+func userNotificationCenter(
+    _ center: UNUserNotificationCenter,
+    didReceive response: UNNotificationResponse,
+    withCompletionHandler completionHandler: @escaping () -> Void
+) {
+    let userInfo = response.notification.request.content.userInfo
+
+    // 1. 先申请后台时间
+    pushTaskID = UIApplication.shared.beginBackgroundTask(
+        withName: "PushReport"
+    ) { [weak self] in
+        self?.finishPushTask()
+    }
+
+    // 2. 开始发送服务器请求
+    PushService.shared.reportClick(userInfo: userInfo) { [weak self] in
+        Task { @MainActor in
+            self?.finishPushTask()
+        }
+    }
+
+    // 3. 处理 Deep Link
+    if let value = userInfo["deeplink"] as? String,
+       let url = URL(string: value) {
+        UIApplication.shared.open(url)
+    }
+
+    // 4. 结束通知响应处理
+    completionHandler()
+}
+
+@MainActor
+private func finishPushTask() {
+    guard pushTaskID != .invalid else { return }
+
+    UIApplication.shared.endBackgroundTask(pushTaskID)
+    pushTaskID = .invalid
+}
 // MARK: - PushPayload
 
 /// 推送 Payload 解析模型。
