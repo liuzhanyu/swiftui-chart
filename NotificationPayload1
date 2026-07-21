@@ -1,0 +1,255 @@
+import Foundation
+
+struct import Foundation
+
+struct NotificationPayload {
+
+    /// メッセージID
+    let messageID: String?
+
+    /// トラッキングID
+    let trackID: String?
+
+    /// 業務種別
+    let businessType: Int?
+
+    /// 遷移先URL
+    let deeplink: URL?
+
+    /// クリック通知要否
+    let needReport: Bool
+
+    /// リッチコンテンツ
+    let rich: RichPayload?
+
+    init?(userInfo: [AnyHashable: Any]) {
+        // aps取得
+        guard let aps = userInfo[Key.aps] as? [String: Any] else {
+            return nil
+        }
+
+        messageID = aps.notificationValue(forKey: Key.messageID)
+        trackID = aps.notificationValue(forKey: Key.trackID)
+        businessType = aps.notificationValue(forKey: Key.businessType)
+        deeplink = aps.notificationURL(forKey: Key.deeplink)
+
+        // 未設定時はfalse
+        needReport =
+            aps.notificationValue(forKey: Key.needReport) ?? false
+
+        // リッチコンテンツ解析
+        rich = RichPayload(aps: aps)
+    }
+
+    private enum Key {
+        static let aps = "aps"
+        static let messageID = "message_id"
+        static let trackID = "track_id"
+        static let businessType = "business_type"
+        static let deeplink = "deeplink"
+        static let needReport = "need_report"
+    }
+}
+
+// MARK: - RichPayload
+
+extension NotificationPayload {
+
+    struct RichPayload {
+
+        /// メディア種別
+        let type: String?
+
+        /// メディアURL
+        let url: URL?
+
+        /// サムネイルURL
+        let thumbnailURL: URL?
+
+        /// 表示名
+        let name: String?
+
+        /// userInfoから解析
+        init?(userInfo: [AnyHashable: Any]) {
+            guard let aps = userInfo[RootKey.aps] as? [String: Any] else {
+                return nil
+            }
+
+            self.init(aps: aps)
+        }
+
+        /// apsから解析
+        fileprivate init?(aps: [String: Any]) {
+            guard let dictionary: [String: Any] =
+                aps.notificationValue(forKey: RootKey.rich)
+            else {
+                return nil
+            }
+
+            type = dictionary.notificationValue(forKey: Key.type)
+            url = dictionary.notificationURL(forKey: Key.url)
+            thumbnailURL =
+                dictionary.notificationURL(forKey: Key.thumbnailURL)
+            name = dictionary.notificationValue(forKey: Key.name)
+        }
+
+        private enum RootKey {
+            static let aps = "aps"
+            static let rich = "rich"
+        }
+
+        private enum Key {
+            static let type = "type"
+            static let url = "url"
+            static let thumbnailURL = "thumbnail_url"
+            static let name = "name"
+        }
+    }
+}
+
+// MARK: - Dictionary Helpers
+
+private extension Dictionary where Key == String, Value == Any {
+
+    /// 指定型で値を取得
+    func notificationValue<T>(forKey key: String) -> T? {
+        self[key] as? T
+    }
+
+    /// URL文字列を変換
+    func notificationURL(forKey key: String) -> URL? {
+        guard
+            let value = self[key] as? String,
+            !value.isEmpty
+        else {
+            return nil
+        }
+
+        return URL(string: value)
+    }
+}z {
+
+    /// メッセージID
+    let messageID: String?
+
+    /// トラッキングID
+    let trackID: String?
+
+    /// 業務種別
+    let businessType: Int?
+
+    /// 遷移先URL
+    let deeplink: URL?
+
+    /// クリック通知要否
+    let needReport: Bool
+
+    /// リッチコンテンツ
+    let rich: RichPayload?
+
+    init?(userInfo: [AnyHashable: Any]) {
+        // aps取得
+        guard let aps = userInfo[Key.aps] as? [String: Any] else {
+            return nil
+        }
+
+        messageID = aps.notificationValue(forKey: Key.messageID)
+        trackID = aps.notificationValue(forKey: Key.trackID)
+        businessType = aps.notificationValue(forKey: Key.businessType)
+        deeplink = aps.notificationURL(forKey: Key.deeplink)
+
+        // 未設定時はfalse
+        needReport =
+            aps.notificationValue(forKey: Key.needReport) ?? false
+
+        // リッチコンテンツ解析
+        rich = RichPayload(aps: aps)
+    }
+
+    private enum Key {
+        static let aps = "aps"
+        static let messageID = "message_id"
+        static let trackID = "track_id"
+        static let businessType = "business_type"
+        static let deeplink = "deeplink"
+        static let needReport = "need_report"
+    }
+}
+
+// MARK: - RichPayload
+
+extension NotificationPayload {
+
+    struct RichPayload {
+
+        /// メディア種別
+        let type: String?
+
+        /// メディアURL
+        let url: URL?
+
+        /// サムネイルURL
+        let thumbnailURL: URL?
+
+        /// 表示名
+        let name: String?
+
+        /// userInfoから解析
+        init?(userInfo: [AnyHashable: Any]) {
+            guard let aps = userInfo[RootKey.aps] as? [String: Any] else {
+                return nil
+            }
+
+            self.init(aps: aps)
+        }
+
+        /// apsから解析
+        fileprivate init?(aps: [String: Any]) {
+            guard let dictionary: [String: Any] =
+                aps.notificationValue(forKey: RootKey.rich)
+            else {
+                return nil
+            }
+
+            type = dictionary.notificationValue(forKey: Key.type)
+            url = dictionary.notificationURL(forKey: Key.url)
+            thumbnailURL =
+                dictionary.notificationURL(forKey: Key.thumbnailURL)
+            name = dictionary.notificationValue(forKey: Key.name)
+        }
+
+        private enum RootKey {
+            static let aps = "aps"
+            static let rich = "rich"
+        }
+
+        private enum Key {
+            static let type = "type"
+            static let url = "url"
+            static let thumbnailURL = "thumbnail_url"
+            static let name = "name"
+        }
+    }
+}
+
+// MARK: - Dictionary Helpers
+
+private extension Dictionary where Key == String, Value == Any {
+
+    /// 指定型で値を取得
+    func notificationValue<T>(forKey key: String) -> T? {
+        self[key] as? T
+    }
+
+    /// URL文字列を変換
+    func notificationURL(forKey key: String) -> URL? {
+        guard
+            let value = self[key] as? String,
+            !value.isEmpty
+        else {
+            return nil
+        }
+
+        return URL(string: value)
+    }
+}
