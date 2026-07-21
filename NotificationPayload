@@ -1,0 +1,110 @@
+import Foundation
+
+struct NotificationPayload {
+
+    let messageID: String?
+    let trackID: String?
+    let businessType: Int?
+    let deeplink: URL?
+    let needReport: Bool
+    let rich: RichPayload?
+
+    init?(userInfo: [AnyHashable: Any]) {
+        guard let aps = userInfo[Key.aps] as? [String: Any] else {
+            return nil
+        }
+
+        messageID = aps.value(forKey: Key.messageID)
+        trackID = aps.value(forKey: Key.trackID)
+        businessType = aps.value(forKey: Key.businessType)
+        deeplink = aps.url(forKey: Key.deeplink)
+        needReport = aps.value(forKey: Key.needReport) ?? false
+
+        rich = RichPayload(aps: aps)
+    }
+
+    private enum Key {
+        static let aps = "aps"
+        static let messageID = "message_id"
+        static let trackID = "track_id"
+        static let businessType = "business_type"
+        static let deeplink = "deeplink"
+        static let needReport = "need_report"
+    }
+}
+
+// MARK: - RichPayload
+
+extension NotificationPayload {
+
+    struct RichPayload {
+
+        let type: String?
+        let url: URL?
+        let thumbnailURL: URL?
+        let name: String?
+
+        /// Notification Service Extension 直接从 userInfo 解析富文本。
+        init?(userInfo: [AnyHashable: Any]) {
+            guard let aps = userInfo[RootKey.aps] as? [String: Any] else {
+                return nil
+            }
+
+            self.init(aps: aps)
+        }
+
+        /// NotificationPayload 已经获取 aps 时使用，
+        /// 避免再次从 userInfo 取 aps。
+        fileprivate init?(aps: [String: Any]) {
+            guard let rich = aps.dictionary(forKey: RootKey.rich) else {
+                return nil
+            }
+
+            self.init(dictionary: rich)
+        }
+
+        /// 富文本字段真正的映射逻辑只放在这里。
+        private init(dictionary: [String: Any]) {
+            type = dictionary.value(forKey: Key.type)
+            url = dictionary.url(forKey: Key.url)
+            thumbnailURL = dictionary.url(forKey: Key.thumbnailURL)
+            name = dictionary.value(forKey: Key.name)
+        }
+
+        private enum RootKey {
+            static let aps = "aps"
+            static let rich = "rich"
+        }
+
+        private enum Key {
+            static let type = "type"
+            static let url = "url"
+            static let thumbnailURL = "thumbnail_url"
+            static let name = "name"
+        }
+    }
+}
+
+// MARK: - Dictionary Mapping
+
+private extension Dictionary where Key == String, Value == Any {
+
+    func value<T>(forKey key: String) -> T? {
+        self[key] as? T
+    }
+
+    func dictionary(forKey key: String) -> [String: Any]? {
+        self[key] as? [String: Any]
+    }
+
+    func url(forKey key: String) -> URL? {
+        guard
+            let string = self[key] as? String,
+            !string.isEmpty
+        else {
+            return nil
+        }
+
+        return URL(string: string)
+    }
+}
